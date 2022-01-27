@@ -1,0 +1,174 @@
+---
+title: "Notebook"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidytext)
+library(widyr)
+
+custom_stop_words <- bind_rows(tidytext::stop_words, 
+                               dplyr::tibble(word = c(1:10, "it's", "it’s", "http", "https", "i’m")))
+
+```
+
+
+## Get comments
+
+Get some comments:
+
+```{r}
+# reddit_comments <- get_reddit_comments(q = '"coffee maker"', size = 1000, fields ="id,body,subreddit") %>%
+#   write_csv("coffee.csv")
+reddit_comments <- read_csv("coffee.csv")
+```
+
+## try exporting in cowo-friendly format
+
+remove stop words, convert custom 2-grams to 1-grams
+
+here we'll convert "coffee maker" so it always stays together
+
+```{r}
+custom_2gram_input <- "coffee maker"
+custom_2gram_replace <- stringr::str_replace(custom_2gram_input, " ", "_")
+
+stopwords_regex <- stringr::str_flatten(custom_stop_words$word, collapse = "|")
+
+test <- reddit_comments %>%
+  mutate(body = stringr::str_replace_all(body, custom_2gram_input, custom_2gram_replace)) %>%
+  select(id, body) %>%
+  tidytext::unnest_tokens(word, body) %>%
+  dplyr::anti_join(custom_stop_words) %>%
+  group_by(id) %>%
+  nest(data = c(word)) %>% 
+  ungroup() %>%
+  mutate(text = purrr::map_chr(data, function(x) stringr::str_flatten(unlist(x), collapse = " "))) %>%
+  select(text)
+  
+write_delim(test  , "for_cowo.txt", col_names = FALSE, quote_escape = "none")
+
+
+```
+
+
+
+## Get 1-gram word freqs & pairs
+
+```{r}
+num_words <- 200
+
+reddit_body <- reddit_comments %>%
+  select(id, body) %>%
+  tidytext::unnest_tokens(word, body) %>%
+  dplyr::anti_join(custom_stop_words)
+
+word_counts <- reddit_body %>%
+  dplyr::group_by(word) %>%
+  dplyr::count(name = "count", sort = TRUE) %>%
+  dplyr::ungroup() %>%
+  dplyr::slice_head(n = num_words)
+
+body_trim <- reddit_body %>%
+  dplyr::inner_join(word_counts, by = "word") 
+
+word_pairs <- body_trim %>%
+  widyr::pairwise_count(word, id, sort = TRUE, upper = FALSE) %>%
+  dplyr::left_join(dplyr::select(body_trim, -id), by = c("item1" = "word")) %>%
+  dplyr::distinct()
+
+word_counts %>%
+  slice_head(n=10) %>%
+  knitr::kable()
+
+word_pairs %>%
+  slice_head(n=10) %>%
+  knitr::kable()
+```
+
+
+## Get 1- and 2-gram word freqs and pairs
+
+
+```{r}
+
+num_words <- 200
+
+# get all 1-grams, remove stop words
+reddit_body_1grams <- reddit_comments %>%
+  select(id, body) %>%
+  tidytext::unnest_tokens(word, body) %>%
+  dplyr::anti_join(custom_stop_words)
+
+# get all the 2-grams, remove those where either word is a stop word
+reddit_body_2grams <- reddit_comments %>%
+  select(id, body) %>%
+  tidytext::unnest_tokens(word, body, token = "ngrams", n = 2) %>%
+  separate(word, into = c("word1", "word2"), sep = " ", remove = FALSE) %>%
+  filter(!word1 %in% custom_stop_words$word,
+         !word2 %in% custom_stop_words$word) %>%
+  select(-word1, -word2)
+
+count_1grams <- reddit_body_1grams %>%
+  dplyr::group_by(word) %>%
+  dplyr::count(sort = TRUE) %>%
+  dplyr::ungroup() %>%
+  dplyr::slice_head(n = num_words)
+
+text_1grams <- reddit_body_1grams %>%
+  dplyr::inner_join(count_1grams, by = "word") %>%
+  dplyr::rename(count = n)
+
+pairs_1grams <- text_1grams %>%
+  widyr::pairwise_count(word, id, sort = TRUE, upper = FALSE) %>%
+  dplyr::left_join(dplyr::select(text_1grams, -id), by = c("item1" = "word")) %>%
+  dplyr::distinct()
+
+count_2grams <- reddit_body_2grams %>%
+  dplyr::group_by(word) %>%
+  dplyr::count(sort = TRUE) %>%
+  dplyr::ungroup() %>%
+  dplyr::slice_head(n = num_words)
+
+
+count_1grams
+
+count_2grams
+
+pairs_1grams
+
+```
+
+
+```{r}
+
+test <- reddit_body_1grams %>%
+  group_by(word) %>%
+  filter(n() >= 10) %>%
+  widyr::pairwise_cor(word, id, sort = TRUE)
+
+test
+```
+
+## Cowo
+
+
+cowo
+
+* removes words < 5 chars long
+
+The function has created a network where:
+
+* only the most frequent expressions appear
+* if 2 expressions appear often together in the text, they are connected in the network
+
+The graph visualized above shows the 20 most frequent expressions in the text.
+
+```{r}
+
+shiny::checkboxInput("somevalue", "Some value", FALSE)
+
+```
+
